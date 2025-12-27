@@ -1,0 +1,210 @@
+-- =============================================
+-- Parking Management System Database Schema
+-- Fully constrained for Microsoft SQL Server
+-- =============================================
+Create Databse AUGMS
+CREATE TABLE Users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    uni_ID VARCHAR(20) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20) NOT NULL UNIQUE,
+    user_type ENUM('Student', 'Staff', 'Admin', 'Visitor', 'Security') NOT NULL,
+    access_status TINYINT(1) NOT NULL DEFAULT 1
+);
+
+
+CREATE TABLE Parking_garage (
+    garage_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    garage_access TINYINT(1) NOT NULL DEFAULT 1
+);
+
+
+CREATE TABLE Gates (
+    gate_id INT AUTO_INCREMENT PRIMARY KEY,
+    garage_id INT NOT NULL,
+    name VARCHAR(50) NOT NULL,
+    UNIQUE KEY UQ_Gates_Name_Garage (garage_id, name),
+    CONSTRAINT FK_Gates_Garage
+        FOREIGN KEY (garage_id)
+        REFERENCES Parking_garage(garage_id)
+        ON DELETE CASCADE
+);
+
+
+CREATE TABLE Parking_spots (
+    spot_id INT AUTO_INCREMENT PRIMARY KEY,
+    spot_status ENUM('Available', 'Occupied', 'Reserved', 'Maintenance', 'Disabled')
+        NOT NULL DEFAULT 'Available',
+    garage_id INT NOT NULL,
+    CONSTRAINT FK_ParkingSpots_Garage
+        FOREIGN KEY (garage_id)
+        REFERENCES Parking_garage(garage_id)
+        ON DELETE CASCADE
+);
+
+
+CREATE TABLE Sensors (
+    sensor_id INT AUTO_INCREMENT PRIMARY KEY,
+
+    sensor_type ENUM('Occupancy', 'Gate', 'Other') NOT NULL,
+
+    spot_id INT NULL,
+    gate_id INT NULL,
+
+    UNIQUE KEY UQ_Sensor_Spot (spot_id),   -- One occupancy sensor per spot
+    UNIQUE KEY UQ_Sensor_Gate (gate_id),   -- One gate sensor per gate
+
+    CONSTRAINT FK_Sensor_Spot
+        FOREIGN KEY (spot_id)
+        REFERENCES Parking_spots(spot_id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT FK_Sensor_Gate
+        FOREIGN KEY (gate_id)
+        REFERENCES Gates(gate_id)
+        ON DELETE CASCADE
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Vehicle (
+    vehicle_id INT AUTO_INCREMENT PRIMARY KEY,
+    license_plate VARCHAR(20) NOT NULL UNIQUE,    -- License plate must be unique system-wide
+    color VARCHAR(20) NOT NULL,
+    Model VARCHAR(50) NOT NULL,
+    User_ID INT NOT NULL,                         -- Every vehicle has an owner
+    Access_status TINYINT(1) NOT NULL DEFAULT 0,  -- 0 = Pending/Not Approved, 1 = Approved
+    Approved_by INT NULL,                         -- NULL until approved
+
+    FOREIGN KEY (User_ID) REFERENCES Users(user_id),
+    FOREIGN KEY (Approved_by) REFERENCES Users(user_id)
+) ENGINE=InnoDB;
+
+
+CREATE TABLE Service_type (
+    service_ID INT AUTO_INCREMENT PRIMARY KEY,
+    service_name VARCHAR(50) NOT NULL UNIQUE,   -- e.g., "Parking Permit", "Valet", "Maintenance"
+    description VARCHAR(500) NULL
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Service_request (
+    request_id INT AUTO_INCREMENT PRIMARY KEY,
+    User_ID INT NOT NULL,
+    vehicle_ID INT NULL,                          -- May be NULL if not vehicle-related (e.g., report)
+    service_ID INT NOT NULL,
+    Spot_ID INT NULL,                             -- Optional: reserved spot
+    status ENUM('Pending', 'Approved', 'Rejected', 'In Progress', 'Completed', 'Cancelled') NOT NULL DEFAULT 'Pending',
+    Approved_by INT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME NULL,
+
+    FOREIGN KEY (User_ID) REFERENCES Users(user_id),
+    FOREIGN KEY (vehicle_ID) REFERENCES Vehicle(vehicle_id),
+    FOREIGN KEY (service_ID) REFERENCES Service_type(service_ID),
+    FOREIGN KEY (Spot_ID) REFERENCES Parking_spots(spot_id),
+    FOREIGN KEY (Approved_by) REFERENCES Users(user_id)
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Invoice (
+    invoice_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_ID INT NOT NULL UNIQUE,               -- One invoice per request
+    amount DECIMAL(10,2) NOT NULL,
+    date_issued DATE NOT NULL DEFAULT CURRENT_DATE,
+    time_issued TIME NOT NULL DEFAULT CURRENT_TIME,
+
+    FOREIGN KEY (request_ID)
+        REFERENCES Service_request(request_id)
+        ON DELETE CASCADE
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Payment_method (
+    method_id INT AUTO_INCREMENT PRIMARY KEY,
+    method_type ENUM('Cash', 'Credit Card', 'Debit Card', 'Mobile Pay', 'Campus Card') NOT NULL,
+    payment_info VARCHAR(200) NULL                -- e.g., last 4 digits or token
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Payment (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_ID INT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    date_paid DATE NOT NULL DEFAULT CURRENT_DATE,
+    time_paid TIME NOT NULL DEFAULT CURRENT_TIME,
+    status ENUM('Completed', 'Failed', 'Refunded', 'Pending') NOT NULL DEFAULT 'Completed',
+    method_ID INT NOT NULL,
+
+    FOREIGN KEY (invoice_ID) REFERENCES Invoice(invoice_id),
+    FOREIGN KEY (method_ID) REFERENCES Payment_method(method_id)
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Reports (
+    report_id INT AUTO_INCREMENT PRIMARY KEY,
+    report_type VARCHAR(50) NOT NULL,             -- e.g., "Occupancy Report", "Revenue", "Violation"
+    user_id INT NOT NULL,                         -- Who generated it
+    date_generated DATE NOT NULL DEFAULT CURRENT_DATE,
+    time_generated TIME NOT NULL DEFAULT CURRENT_TIME,
+    details TEXT NULL,
+
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+) ENGINE = InnoDB;
+
+
+CREATE TABLE Log_record (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    spot_ID INT NULL,
+    gate_ID INT NULL,
+    request_ID INT NULL,
+    report_ID INT NULL,
+    vehicle_ID INT NULL,
+    user_ID INT NULL,
+    sensor_ID INT NULL,
+    log_type VARCHAR(50) NOT NULL,                -- e.g., "Entry", "Exit", "Violation", "Sensor Trigger"
+    details TEXT NULL,
+    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (spot_ID) REFERENCES Parking_spots(spot_id),
+    FOREIGN KEY (gate_ID) REFERENCES Gates(gate_id),
+    FOREIGN KEY (request_ID) REFERENCES Service_request(request_id),
+    FOREIGN KEY (report_ID) REFERENCES Reports(report_id),
+    FOREIGN KEY (vehicle_ID) REFERENCES Vehicle(vehicle_id),
+    FOREIGN KEY (user_ID) REFERENCES Users(user_id),
+    FOREIGN KEY (sensor_ID) REFERENCES Sensors(sensor_id)
+) ENGINE = InnoDB;
+
+
+-- Many-to-Many Relationship Tables
+
+CREATE TABLE Requests (  -- Users who can view/request certain reports
+    User_ID INT NOT NULL,
+    Report_ID INT NOT NULL,
+    PRIMARY KEY (User_ID, Report_ID),
+    FOREIGN KEY (User_ID) REFERENCES Users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (Report_ID) REFERENCES Reports(report_id) ON DELETE CASCADE
+);
+
+CREATE TABLE Controls (  -- Admins/Security who control specific garages
+    User_ID INT NOT NULL,
+    Garage_ID INT NOT NULL,
+    PRIMARY KEY (User_ID, Garage_ID),
+    FOREIGN KEY (User_ID) REFERENCES Users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (Garage_ID) REFERENCES Parking_garage(garage_id) ON DELETE CASCADE
+);
+
+CREATE TABLE Owns (  -- Links vehicles to service requests (if needed beyond direct FK)
+    vehicle_ID INT NOT NULL,
+    Request_ID INT NOT NULL,
+    PRIMARY KEY (vehicle_ID, Request_ID),
+    FOREIGN KEY (vehicle_ID) REFERENCES Vehicle(vehicle_id) ON DELETE CASCADE,
+    FOREIGN KEY (Request_ID) REFERENCES Service_request(request_id) ON DELETE CASCADE
+);
+
+-- Optional: Indexes for performance
+CREATE INDEX IX_Vehicle_User ON Vehicle(User_ID);
+CREATE INDEX IX_ServiceRequest_User ON Service_request(User_ID);
+CREATE INDEX IX_ServiceRequest_Status ON Service_request(status);
+CREATE INDEX IX_Log_record_Timestamp ON Log_record(timestamp DESC);
+CREATE INDEX IX_Parking_spots_Garage ON Parking_spots(garage_id);
