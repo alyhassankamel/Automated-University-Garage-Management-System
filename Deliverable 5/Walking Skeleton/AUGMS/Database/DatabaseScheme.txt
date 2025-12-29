@@ -1,0 +1,208 @@
+CREATE DATABASE AUGMS_UNI_PARKING;
+
+GO
+
+USE AUGMS_UNI_PARKING;
+
+GO
+
+-- =============================================
+
+-- 1. Core Structure
+
+-- =============================================
+
+CREATE TABLE ParkingGarage (
+
+    garageId       INT IDENTITY(1,1) PRIMARY KEY,
+
+    garageName     NVARCHAR(100) NOT NULL,
+
+    totalSpots     INT           NOT NULL CHECK (totalSpots > 0),
+
+);
+
+GO
+
+-- =============================================
+
+-- 2. Spots & Sensors
+
+-- =============================================
+
+CREATE TABLE ParkingSpot (
+
+    spotId     INT IDENTITY(1,1) PRIMARY KEY,
+
+    garageId   INT NOT NULL,
+
+    spotNumber NVARCHAR(20) NULL,          -- e.g. A-12, ZoneB-03, Faculty-05
+
+    CONSTRAINT FK_ParkingSpot_Garage FOREIGN KEY (garageId) REFERENCES ParkingGarage(garageId)
+
+);
+
+GO
+
+CREATE TABLE OccupancySensor (
+
+    sensorId           INT IDENTITY(1,1) PRIMARY KEY,
+
+    spotId             INT      NOT NULL,
+
+    isCurrentlyOccupied BIT     NOT NULL DEFAULT 0,    -- single source of truth
+
+    CONSTRAINT FK_Sensor_ParkingSpot FOREIGN KEY (spotId) REFERENCES ParkingSpot(spotId),
+
+    CONSTRAINT UQ_Sensor_Spot UNIQUE (spotId)
+
+);
+
+GO
+
+-- =============================================
+
+-- 3. Vehicles & Active Sessions
+
+-- =============================================
+
+CREATE TABLE Vehicle (
+
+    vehicleId    INT IDENTITY(1,1) PRIMARY KEY,
+
+    licensePlate NVARCHAR(20) NOT NULL UNIQUE,
+
+    vehicleType  NVARCHAR(30)  NULL,          -- student, faculty, visitor, motorcycle, etc.
+
+    registeredAt DATETIME     NOT NULL DEFAULT GETDATE()
+
+);
+
+GO
+
+CREATE TABLE ParkingSession (
+
+    sessionId     INT IDENTITY(1,1) PRIMARY KEY,
+
+    vehicleId     INT       NOT NULL,
+
+    spotId        INT       NOT NULL,
+
+    entryTime     DATETIME  NOT NULL DEFAULT GETDATE(),
+
+    exitTime      DATETIME  NULL,                  -- NULL = currently parked
+
+    processedAt   DATETIME  NULL,                  -- when exit was finalized/confirmed
+
+    CONSTRAINT FK_Session_Vehicle FOREIGN KEY (vehicleId) REFERENCES Vehicle(vehicleId),
+
+    CONSTRAINT FK_Session_Spot    FOREIGN KEY (spotId)    REFERENCES ParkingSpot(spotId),
+
+    CONSTRAINT CHK_Exit_After_Entry CHECK (exitTime IS NULL OR exitTime > entryTime),
+
+    CONSTRAINT UQ_Active_Session UNIQUE (vehicleId, spotId) WHERE exitTime IS NULL
+
+);
+
+GO
+
+-- =============================================
+
+-- 4. Entry + Exit Event Log (audit trail)
+
+-- =============================================
+
+CREATE TABLE EntryExitLog (
+
+    logId         INT IDENTITY(1,1) PRIMARY KEY,
+
+    licensePlate  NVARCHAR(20) NOT NULL,
+
+    direction     CHAR(5)      NOT NULL CHECK (direction IN ('ENTRY', 'EXIT')),  -- ENTRY or EXIT
+
+    garageId      INT          NOT NULL,
+
+    spotId        INT          NULL,               -- known at exit or via sensor; NULL if only plate read
+
+    eventTime     DATETIME     NOT NULL DEFAULT GETDATE(),
+
+    sensorId      INT          NULL,               -- which sensor triggered (if applicable)
+
+    CONSTRAINT FK_Log_Garage FOREIGN KEY (garageId) REFERENCES ParkingGarage(garageId),
+
+    CONSTRAINT FK_Log_Spot   FOREIGN KEY (spotId)   REFERENCES ParkingSpot(spotId),
+
+    CONSTRAINT FK_Log_Sensor FOREIGN KEY (sensorId) REFERENCES OccupancySensor(sensorId)
+
+);
+
+GO
+
+-- =============================================
+
+-- 5. Sample Data
+
+-- =============================================
+
+INSERT INTO ParkingGarage (garageName, isAccessible, totalSpots)
+
+VALUES 
+
+    ('Main Campus Garage',     1, 5),
+
+    ('ITI / Engineering Garage', 1, 5),
+
+    ('NAID / Faculty Garage',    1, 5);
+
+GO
+
+-- Create spots (A-01 to C-05)
+
+DECLARE @g INT = 1;
+
+WHILE @g <= 3
+
+BEGIN
+
+    DECLARE @s INT = 1;
+
+    WHILE @s <= 5
+
+    BEGIN
+
+        INSERT INTO ParkingSpot (garageId, spotNumber)
+
+        VALUES (@g, CONCAT(CHAR(64 + @g), '-', RIGHT('0' + CAST(@s AS VARCHAR), 2)));
+
+        SET @s = @s + 1;
+
+    END
+
+    SET @g = @g + 1;
+
+END
+
+GO
+
+-- Sensors – all free initially
+
+INSERT INTO OccupancySensor (spotId, isCurrentlyOccupied)
+
+SELECT spotId, 0 FROM ParkingSpot;
+
+GO
+
+-- Sample vehicles
+
+INSERT INTO Vehicle (licensePlate, vehicleType)
+
+VALUES 
+
+    ('STU-1234', 'Student'),
+
+    ('FAC-5678', 'Faculty'),
+
+    ('VIS-9999', 'Visitor');
+
+GO
+
